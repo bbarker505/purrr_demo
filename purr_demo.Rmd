@@ -1,0 +1,287 @@
+---
+title: 'Purrr Demo for Aggregate'
+author: "Brittany Barker"
+date: "`r format(Sys.Date(), tz = 'America/Los_Angeles')`"
+output:
+  html_document:
+    df_print: paged
+    theme: default
+---
+
+<style type="text/css">
+
+body{ /* Normal  */
+      font-size: 14px;
+  }
+  p {line-height: 1.5em;
+  }
+  p.caption {
+  font-size: 0.75em;
+}
+</style>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(here)
+```
+
+# An introduction to the `purrr` package
+
+- Part of my motivation for doing this demo is to learn to `purrr`!
+- `purrr` is the `tidyverse` answer to iteratively apply functions   
+- Here I will focus primarily on using the `map()` function of `purrr`, which is intended to simplify code and avoid over-use of `for` loops   
+- Much of this material is borrowed from tutorials or lessons created by others (e.g. Rebecca Barter, Jenny Bryan, Ted Laderas)  
+
+##  The `purrr` package and `map()`
+
+```{r, echo=FALSE, fig.cap=" It was on the corner of the street that he noticed the first sign of something peculiar - a cat reading a map. (J.K. Rowling, Harry Potter and the Philosopher’s Stone;  Drawing by Jim Kay)"}
+
+knitr::include_graphics("image/cat_map.jpg")
+```
+
+`purrr::map()` lets us *apply* the same action/function to every element of an object (e.g. each element of a list of a vector, or each of the columns of a data frame). 
+
+### Overview of `map()`
+
+The `map()` function is:
+
+```{r, eval=FALSE}
+map(.x, .f, ...)
+map(input, function_to_apply, optional_other_stuff)
+```
+
+The **input** object `.x` to any map function is always either  
+- a *vector* (of any type), in which case the iteration is done over the elements of the vector    
+- a *list*, in which case the iteration is performed over the elements of the list   
+- a *data frame*, in which case the iteration is performed over the columns of the data frame  
+
+The naming convention of the map functions indicate which type of output will be produced  
+- `map(.x, .f)` is the main mapping function and returns a list  
+- `map_df(.x, .f)` returns a data frame  
+- `map_dbl(.x, .f)` returns a numeric (double) vector  
+- `map_chr(.x, .f)` returns a character vector  
+- `map_lgl(.x, .f)` returns a logical vector  
+
+One of the main reasons to use `purrr` is the flexible and concise syntax for specifying `.f`, the function to apply. `.f` may be  
+- an existing function   
+- an anonymous function, defined on-the-fly  
+- a formula (this is unique to `purrr` and provides a concise way to define an anonymous function)  
+
+### `map()`: some basic examples
+In the example below we will iterate through the vector `c(1, 4, 7)` by adding 10 to each element. This function applied to a single number, which we will call .x, can be defined as
+
+```{r}
+addTen <- function(.x) {
+  return(.x + 10)
+}
+```
+
+The `map()` function below iterates `addTen()` across all entries of the vector, `.x = c(1, 4, 7)`, and returns the output as a list
+
+```{r}
+map(.x = c(1, 4, 7),
+    .f = addTen)
+```
+
+```{r, echo=FALSE, out.width="80"}
+knitr::include_graphics("image/map_frosting.png")
+```
+
+In other words, we're taking a list of something (`cupcakes`), applying a function (`frost()`) to each of them. Thus, we should get back three frosted cupcakes.
+
+The output of `map()` will always be a list. For example, a data frame as an input will lead to the same result.
+
+```{r}
+map(.x = data.frame(a= 1, b = 4, c = 7),
+    .f = addTen)
+```
+
+If we wanted the output of `map()` to be some other object type, we need to use a different function. For instance to map the input to a numeric (double) vector, you can use the `map_dbl()` (“map to a double”) function.
+
+```{r}
+map_dbl(c(1, 4, 7), addTen)
+```
+
+To map to a character vector, you can use the `map_chr()` (“map to a character”) function.
+
+```{r}
+map_chr(c(1, 4, 7), addTen)
+```
+
+If you want to return a data frame, then you would use the `map_df()` function. However, you need to make sure that in each iteration you’re returning a data frame which has consistent column names. `map_df()` will automatically bind the rows of each iteration.
+
+For this example, we will return a data frame whose columns correspond to the original number and the number plus ten.
+
+```{r}
+map_df(c(1, 4, 7), function(.x) {
+  data.frame(old_number = .x, 
+             new_number = addTen(.x))
+})
+```
+
+Inside anonymous functions in the `map()` functions, you refer to each element of the input vector as `.` . 
+
+```{r}
+map_chr(c(1, 4, 7), ~ str_glue("Adding 10 to {.x} is {addTen(.x)}."))
+```
+
+
+## An application of `map()` in my own work
+
+My first exposure to `purrr:map()` came while I was co-developing a population modeling program that uses gridded (raster) climate data as inputs. The problem is likely to be applicable to many scenarios: you have a whole bunch of files and need to import ones that meet a certain criteria.
+
+In our case, the model should use the highest quality climate file for a given day, where "stable" > "provisional" > "early". Depending on the species being modeled, climate variables may include "tmin" (minimum temperature), "tmax" (maximum temperature), "tmean" (mean temperature), and "ppt" (precipitation). Thus, the objective is to efficiently extract best quality files for each climate variable list using `map()`. 
+
+The actual climate data files are huge rasters, so I created "fake" .csv files that we will pretend contain climate data for the entire 48-state U.S. for all days in 2020.
+
+Steps  
+1. Write a function that converts a list of file names for a climate variable into a data frame         
+2. Use `map()` to apply that function to all climate variables    
+3. Write a second function that extracts the best quality files for a climate variable  
+4. Use `map()` to apply that function to the list of data frames (file names for all variables)    
+
+The function below will list data files for a single climate variable and convert the list to a data frame. All climate files are in a single folder "/data" in the project folder, so it's not necessary in this case to specify the absolute path. The `pattern` argument specifies which climate variable to grab `.csv` files for. Here we will grab "tmin" files.
+
+```{r}
+load_files <- function(variable){
+  climate_fls <- list.files(path = "data/", pattern = variable)
+  out_frame <- data.frame(climate_fls)
+  colnames(out_frame) <- "files"
+  return(out_frame)
+}
+tmin_files <- load_files("tmin")
+head(tmin_files)
+```
+
+For certain dates, there are several versions of a "tmin" file available, resulting in greater than 365 (or 366 for leap years) files for a year. This usually occurs because our server is continually checking the climate database for updates to the climate data (e.g. "early" files are replaced with "provisional" after some validation analyses are performed).
+
+```{r}
+dim(tmin_files)
+```
+
+For example, two file exist for 11/15/2020 ("early" and "provisional")
+
+```{r}
+tmin_files %>% filter(grepl("20201115", files))
+```
+
+We are not just working with "tmin", so we need to use `map()` to iterate `load_files()` across all climate variables.
+
+```{r}
+variables <- c("tmin", "tmax", "tmean", "ppt")
+file_lists <- map(.x = variables, .f = load_files)
+names(file_lists) <- variables
+sapply(file_lists, head)
+```
+
+We need to extract the best quality files for each climate variable. The function below uses the `dplyr` and `stringr` packages to rank files according to their quality. Columns are added to indicate the date and quality of each file, which are extracted using `str_split_fixed()` on the file name. The quality is given a numerical rank, files are grouped by date, and the top ranked file for each date is extracted.
+
+```{r}
+extract_best <- function(x) {
+  df <- x %>%
+    mutate(dates = str_split_fixed(string = files, pattern = "_", 6)[,5],
+           quality = str_split_fixed(string = files, pattern = "_", 6)[,3],
+           rank = case_when(quality == "stable" ~ 1, 
+                            quality == "provisional" ~ 2, 
+                            quality == "early" ~ 3)) %>%
+    group_by(dates) %>%
+    arrange(rank) %>%
+    slice_min(rank) 
+}
+```
+
+Let's start by applying `extract_best` to the list of file names for a single climate variable, "tmin".
+
+```{r, message = FALSE}
+tmin_files_best <- extract_best(tmin_files)
+dim(tmin_files_best)
+```
+
+Now there are the right number of files for the year (366 days in 2020), with "provisional" files being kept over "early" data files for a given date.
+
+```{r}
+tmin_files_best %>% filter(grepl("20201115", files))
+```
+
+Finally we will use `map()` to iterate `extract_best()` across the list of data frames (file names for all climate variables).
+
+```{r}
+file_lists_best <- map(.x = file_lists, .f = extract_best)
+sapply(file_lists_best, nrow)
+```
+
+The objective is now complete - we have names of the highest quality data files for every day of the year for each climate variable. For my work, the next step would be to import those files into our modeling program for further analysis.
+
+
+## `map2()`: map with multiple inputs
+
+What if you need to map a function over two vectors or lists? It would be more efficient and faster to do this in parallel (i.e. simultaneously). 
+
+You can use `map2()` for that. Here is the usage:
+
+```{r, eval=FALSE}
+map2(.x, .y, .f, ...)
+map(input_one, input_two, function_to_apply, optional_other_stuff)
+```
+
+As with regular `map()`, you can use type-specific `map2()` to control to output object type: `map2_chr()`, `map2_lgl()`, etc.
+
+Let's do a simple example where we have two vectors, `x` and `y`.
+
+```{r} 
+x <- c(1, 4, 7)
+y <- c(10, 5, 3)
+```
+
+The `map2_dbl()` function below iterates along both vectors in parallel and creates a new vector in which each element represents the minimum value of `x` and `y`. 
+
+```{r}
+map2_dbl(x, y, min)
+```
+
+If you want to return a data frame, then you would use the `map2_df()` function. 
+
+For this example, we will return a data frame whose columns correspond to the two input values (`x`, `y`) and the minimum of the two.
+
+```{r}
+map2_df(x, y, function(.x, .y)  {
+  data.frame(value_1 = .x, 
+             value_2 = .y,
+             min_value = min(.x, .y))
+})
+```
+
+Since the `map2()` functions iterate along the two vectors in parallel, they need to be the same length.
+
+```{r, error=TRUE}
+x2 <- c(1, 4, 7, 9)
+y2 <- c(10, 5, 3)
+map2_dbl(x2, y2, min)
+```
+
+Inside anonymous functions in the `map2()` functions, you refer to elements of the first vector as .x and elements of the second as .y. Similar to `map()`, each element of the input vectors are referred to as `.` .
+
+```{r}
+map2_chr(x, y, ~ str_glue("The minimum of {.x} and {.y} is {min(.x, .y)}."))
+```
+
+
+The `pmap()` (p for parallel) function can be used to map over more than two vectors or lists, but we will not go into that here.
+
+## Where next?
+
+Using and understanding `purrr` functions opens up something really powerful: parallel computing. You can have multiple cores of a machine running iterations of your list using the `furrr` (short for future purrr) package. I have not yet explored these capabilities much, but hope to in the future!
+
+## Some useful vignettes, demos, and introductions 
+
+I pulled some of this demo material (or ideas) from these sources, and found them to be really helpful:  
+- Rebecca Barter's ["Learn to purrr"](http://www.rebeccabarter.com/blog/2019-08-19_purrr/)  
+- Emily Robinson's [Getting Off the Map: Exploring purrr's Other Functions](https://hookedondata.org/going-off-the-map/)  
+- Jenny Bryan's [purrr tutorial](https://jennybc.github.io/purrr-tutorial/)  
+- Hadley Wickham's [Advanced R, Chapter 9: Functionals](https://adv-r.hadley.nz/functionals.html)  
+- Altman et al's (2020) [Functional Programming, Chapter 9: Map with multiple inputs](https://dcl-prog.stanford.edu/purrr-parallel.html)  
+- Mango Solutions [To purrr or not to purrr](https://www.r-bloggers.com/2018/05/to-purrr-or-not-to-purrr/)  
+
+Illustrations are from Hadley Wickham's talk ["The Joy of Functional Programming (for Data Science)."](https://learning.acm.org/techtalks/functionalprogramming)
